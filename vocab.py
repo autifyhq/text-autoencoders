@@ -2,7 +2,7 @@ from collections import Counter
 
 
 class Vocab(object):
-    def __init__(self, path):
+    def __init__(self):
         self.word2idx = {}
         self.idx2word = []
 
