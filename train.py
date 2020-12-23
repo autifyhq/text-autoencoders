@@ -16,18 +16,6 @@ from batchify import get_batches, generate_sentences
 parser = argparse.ArgumentParser()
 # Path arguments
 parser.add_argument(
-    "--train",
-    metavar="FILE",
-    required=True,
-    help="path to training file",
-)
-parser.add_argument(
-    "--valid",
-    metavar="FILE",
-    required=True,
-    help="path to validation file",
-)
-parser.add_argument(
     "--save-dir",
     default="checkpoints",
     metavar="DIR",
@@ -210,6 +198,7 @@ class Trainer:
             ),
             self.log_file,
         )
+        self.model = model
 
     def evaluate(self, n_samples=64):
         self.model.eval()
