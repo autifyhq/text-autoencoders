@@ -3,30 +3,17 @@ import time
 import os
 import random
 import collections
-import numpy as np
+
 import torch
+from torch.utils.data.dataloader import DataLoader
 
 from model import DAE, VAE, AAE
-from vocab import Vocab
 from meter import AverageMeter
-from utils import set_seed, logging, load_sent
-from batchify import get_batches, generate_sentences
-
+from utils import set_seed, logging
+from datagen import RandomSequence
 
 parser = argparse.ArgumentParser()
-# Path arguments
-parser.add_argument(
-    "--train",
-    metavar="FILE",
-    required=True,
-    help="path to training file",
-)
-parser.add_argument(
-    "--valid",
-    metavar="FILE",
-    required=True,
-    help="path to validation file",
-)
+
 parser.add_argument(
     "--save-dir",
     default="checkpoints",
@@ -39,14 +26,7 @@ parser.add_argument(
     metavar="FILE",
     help="path to load checkpoint if specified",
 )
-# Architecture arguments
-parser.add_argument(
-    "--vocab-size",
-    type=int,
-    default=10000,
-    metavar="N",
-    help="keep N most frequent words in vocabulary",
-)
+
 parser.add_argument(
     "--dim_z",
     type=int,
@@ -189,7 +169,9 @@ class Trainer:
         logging(str(self.opt), self.log_file)
 
     def setup_data(self):
-        self.vocab = Vocab()
+        self.ds = RandomSequence()
+        self.vocab = self.ds.vocab
+        self.dl = DataLoader(self.ds, self.opt.batch_size)
         logging("# vocab size {}".format(self.vocab.size), self.log_file)
 
     def setup_device(self):
@@ -210,14 +192,22 @@ class Trainer:
             ),
             self.log_file,
         )
+        self.model = model
 
-    def evaluate(self, n_samples=64):
+    def get_batches(self, n):
+        i = 0
+        while True:
+            for a, b in self.dl:
+                yield a.to(self.device), b.to(self.device)
+                i += 1
+                if i >= n:
+                    return
+
+    def evaluate(self, n=10):
         self.model.eval()
         meters = collections.defaultdict(lambda: AverageMeter())
         with torch.no_grad():
-            data = generate_sentences(n_samples)
-            batches, _ = get_batches(data, self.vocab, self.opt.batch_size, self.device)
-            for inputs, targets in batches:
+            for inputs, targets in self.get_batches(n):
                 losses = self.model.autoenc(inputs, targets)
                 for k, v in losses.items():
                     meters[k].update(v.item(), inputs.size(1))
@@ -225,21 +215,17 @@ class Trainer:
         meters["loss"].update(loss)
         return meters
 
-    def train(self, n_samples=1024):
+    def train(self, n=1000):
         best_val_loss = None
         for epoch in range(self.opt.epochs):
-
-            data = generate_sentences(n_samples)
-            batches, _ = get_batches(data, self.vocab, self.opt.batch_size, self.device)
 
             start_time = time.time()
             logging("-" * 80, self.log_file)
             self.model.train()
             meters = collections.defaultdict(lambda: AverageMeter())
-            indices = list(range(len(batches)))
-            random.shuffle(indices)
-            for i, idx in enumerate(indices):
-                inputs, targets = batches[idx]
+
+            for i, batch in enumerate(self.get_batches(n)):
+                inputs, targets = batch
                 losses = self.model.autoenc(inputs, targets, is_train=True)
                 losses["loss"] = self.model.loss(losses)
                 self.model.step(losses)
@@ -248,7 +234,7 @@ class Trainer:
 
                 if (i + 1) % args.log_interval == 0:
                     log_output = "| epoch {:3d} | {:5d}/{:5d} batches |".format(
-                        epoch + 1, i + 1, len(indices)
+                        epoch + 1, i + 1, n
                     )
                     for k, meter in meters.items():
                         log_output += " {} {:.2f},".format(k, meter.avg)
