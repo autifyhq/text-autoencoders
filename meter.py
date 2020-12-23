@@ -1,4 +1,3 @@
-
 class AverageMeter(object):
     def __init__(self):
         self.clear()
