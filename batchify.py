@@ -1,4 +1,17 @@
+import random
+
 import torch
+
+
+def generate_sentences(batch_size=64, max_seq_len=32):
+    batch = []
+    for _ in range(batch_size):
+        o = ""
+        n = random.randrange(1, max_seq_len)
+        for _ in range(n):
+            o += chr(random.randrange(256))
+        batch.append(o)
+    return batch
 
 
 def get_batch(x, vocab, device):
