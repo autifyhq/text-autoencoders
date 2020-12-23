@@ -1,10 +1,12 @@
 import argparse
+from queue import Queue
 import time
 import os
 import random
 import collections
 import numpy as np
 import torch
+from threading import Thread
 
 from model import DAE, VAE, AAE
 from vocab import Vocab
@@ -28,13 +30,6 @@ parser.add_argument(
     help="path to load checkpoint if specified",
 )
 # Architecture arguments
-parser.add_argument(
-    "--vocab-size",
-    type=int,
-    default=10000,
-    metavar="N",
-    help="keep N most frequent words in vocabulary",
-)
 parser.add_argument(
     "--dim_z",
     type=int,
@@ -125,7 +120,7 @@ parser.add_argument(
 parser.add_argument(
     "--epochs",
     type=int,
-    default=50,
+    default=5000,
     metavar="N",
     help="number of training epochs",
 )
@@ -152,7 +147,7 @@ parser.add_argument(
 parser.add_argument(
     "--log-interval",
     type=int,
-    default=100,
+    default=5,
     metavar="N",
     help="report interval",
 )
@@ -169,6 +164,8 @@ class Trainer:
         self.setup_device()
         self.setup_data()
         self.setup_model()
+        self.worker = Thread(target=self.data_worker, daemon=True)
+        self.worker.start()
 
     def setup_logs(self):
         if not os.path.exists(self.opt.save_dir):
@@ -177,6 +174,7 @@ class Trainer:
         logging(str(self.opt), self.log_file)
 
     def setup_data(self):
+        self.queue = Queue(64)
         self.vocab = Vocab()
         logging("# vocab size {}".format(self.vocab.size), self.log_file)
 
@@ -200,12 +198,21 @@ class Trainer:
         )
         self.model = model
 
-    def evaluate(self, n_samples=64):
+    def data_worker(self):
+        n = 8192
+        while True:
+            if self.queue.full():
+                time.sleep(0.1)
+                continue
+            data = generate_sentences(n)
+            batches, _ = get_batches(data, self.vocab, self.opt.batch_size, self.device)
+            self.queue.put(batches)
+
+    def evaluate(self):
         self.model.eval()
         meters = collections.defaultdict(lambda: AverageMeter())
         with torch.no_grad():
-            data = generate_sentences(n_samples)
-            batches, _ = get_batches(data, self.vocab, self.opt.batch_size, self.device)
+            batches = self.queue.get()
             for inputs, targets in batches:
                 losses = self.model.autoenc(inputs, targets)
                 for k, v in losses.items():
@@ -214,12 +221,11 @@ class Trainer:
         meters["loss"].update(loss)
         return meters
 
-    def train(self, n_samples=1024):
+    def train(self):
         best_val_loss = None
         for epoch in range(self.opt.epochs):
 
-            data = generate_sentences(n_samples)
-            batches, _ = get_batches(data, self.vocab, self.opt.batch_size, self.device)
+            batches = self.queue.get()
 
             start_time = time.time()
             logging("-" * 80, self.log_file)
@@ -244,19 +250,20 @@ class Trainer:
                         meter.clear()
                     logging(log_output, self.log_file)
 
-            valid_meters = self.evaluate()
-            logging("-" * 80, self.log_file)
-            log_output = "| end of epoch {:3d} | time {:5.0f}s | valid".format(
-                epoch + 1, time.time() - start_time
-            )
-            for k, meter in valid_meters.items():
-                log_output += " {} {:.2f},".format(k, meter.avg)
-            if not best_val_loss or valid_meters["loss"].avg < best_val_loss:
-                log_output += " | saving model"
-                ckpt = {"args": args, "model": self.model.state_dict()}
-                torch.save(ckpt, os.path.join(args.save_dir, "model.pt"))
-                best_val_loss = valid_meters["loss"].avg
-            logging(log_output, self.log_file)
+            if epoch % 10 == 0:
+                valid_meters = self.evaluate()
+                logging("-" * 80, self.log_file)
+                log_output = "| end of epoch {:3d} | time {:5.0f}s | valid".format(
+                    epoch + 1, time.time() - start_time
+                )
+                for k, meter in valid_meters.items():
+                    log_output += " {} {:.2f},".format(k, meter.avg)
+                if not best_val_loss or valid_meters["loss"].avg < best_val_loss:
+                    log_output += " | saving model"
+                    ckpt = {"args": args, "model": self.model.state_dict()}
+                    torch.save(ckpt, os.path.join(args.save_dir, "model.pt"))
+                    best_val_loss = valid_meters["loss"].avg
+                logging(log_output, self.log_file)
         logging("Done training", self.log_file)
 
 
