@@ -40,7 +40,7 @@ parser.add_argument(
 parser.add_argument(
     "--dim_emb",
     type=int,
-    default=512,
+    default=256,
     metavar="D",
     help="dimension of word embedding",
 )
@@ -111,7 +111,7 @@ parser.add_argument(
 parser.add_argument(
     "--lr",
     type=float,
-    default=0.0005,
+    default=0.001,
     metavar="LR",
     help="learning rate",
 )
