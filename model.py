@@ -130,10 +130,13 @@ class DAE(TextModel):
 
     def step(self, losses):
         self.opt.zero_grad()
-        losses["loss"].backward()
-        # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        # nn.utils.clip_grad_norm_(self.parameters(), clip)
-        self.opt.step()
+        try:
+            losses["loss"].backward()
+            # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+            nn.utils.clip_grad_norm_(self.parameters(), 1)
+            self.opt.step()
+        except RuntimeError:
+            print("Runtime Error!")
 
     def nll_is(self, inputs, targets, m):
         """compute negative log-likelihood by importance sampling:
